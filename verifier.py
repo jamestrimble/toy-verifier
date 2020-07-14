@@ -6,9 +6,7 @@ class Constraint(object):
     def __init__(self, lhs, rhs):
         self.lhs = lhs
         self.rhs = rhs
-
-    def add_term(self, term):
-        self.lhs.append(term)
+        self.make_canonical_form()
 
     def copy(self):
         return Constraint(dict(self.lhs), self.rhs)
@@ -20,6 +18,7 @@ class Constraint(object):
 
     def simplify(self):
         self.lhs = {var: coef for (var, coef) in self.lhs.items() if coef != 0}
+        self.make_canonical_form()
 
     def add_constraint(self, c):
         for var_num in c.lhs:
@@ -28,6 +27,7 @@ class Constraint(object):
             except:
                 self.lhs[var_num] = c.lhs[var_num]
         self.rhs += c.rhs
+        self.make_canonical_form()
 
     def div_and_round_up(self, x, d):
         retval = x // d
@@ -35,7 +35,7 @@ class Constraint(object):
             retval += 1
         return retval
 
-    def canonical_form(self):
+    def make_canonical_form(self):
         rhs = self.rhs
         terms = []
         for var, coef in self.lhs.items():
@@ -48,10 +48,10 @@ class Constraint(object):
             terms.append((coef, literal))
         if rhs < 0:
             rhs = 0
-        return terms, rhs
+        self.canonical_form = (terms, rhs)
 
     def divide(self, d):
-        terms, rhs = self.canonical_form()
+        terms, rhs = self.canonical_form
         rhs = self.div_and_round_up(rhs, d)
         for coef, literal in terms:
             coef = self.div_and_round_up(coef, d)
@@ -63,11 +63,13 @@ class Constraint(object):
                 var = literal
             self.lhs[var] = coef
         self.rhs = rhs
+        self.make_canonical_form()
 
     def multiply(self, m):
         for var_num in self.lhs:
             self.lhs[var_num] *= m
         self.rhs *= m
+        self.make_canonical_form()
 
     def __repr__(self):
         return str(self.lhs) + " >= " + str(self.rhs)
@@ -121,16 +123,16 @@ class Proof(object):
     def delete_constraint(self, num):
         if num in self.constraints_that_unit_propagate:
             self.constraints_that_unit_propagate.remove(num)
-        for coef, literal in self.constraints[num].canonical_form()[0]:
+        for coef, literal in self.constraints[num].canonical_form[0]:
             self.literal_to_constraints[literal].remove(num)
         del self.constraints[num]
 
     def add_constraint(self, constraint, num):
-        terms, rhs = constraint.canonical_form()
+        terms, rhs = constraint.canonical_form
         slack = sum(coef for (coef, literal) in terms) - rhs
         if len(terms)==1 or any(coef > slack for (coef, literal) in terms):
             self.constraints_that_unit_propagate.add(num)
-        for coef, literal in constraint.canonical_form()[0]:
+        for coef, literal in constraint.canonical_form[0]:
             self.literal_to_constraints[literal].add(num)
         if self.level != -1 and num != -1:
             self.levels[self.level].append(num)
@@ -180,7 +182,7 @@ class Proof(object):
     def propagate_constraint(self, constraint_num, known_literals, constraints_to_process, constraints_to_process_set):
         # literals are stored as var-number (positive literal) or ~var-number (negated literal)
         constraint = self.constraints[constraint_num]
-        terms, rhs = constraint.canonical_form()
+        terms, rhs = constraint.canonical_form
         unassigned_terms = []
         for coef, literal in terms:
             if literal in known_literals:
