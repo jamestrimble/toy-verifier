@@ -111,7 +111,6 @@ class Proof(object):
         self.literal_to_constraints = {literal: set() for var in range(1, self.numvars + 1)
                                        for literal in [var, ~var]}
         self.constraints_that_unit_propagate = set()
-        self.known_literals = set()
         self.var_numbers = set()
         self.objective = None
 
@@ -246,9 +245,9 @@ class Proof(object):
 
         return False
 
-    def unit_propagate(self, save_known_literals=False):
+    def unit_propagate(self):
         """Return true iff unit propagation wipes out a constraint"""
-        known_literals = set() if save_known_literals else set(self.known_literals)
+        known_literals = set()
         constraints_to_process = deque()
         constraints_to_process_set = set(self.constraints_that_unit_propagate)
         for num in constraints_to_process_set:
@@ -258,9 +257,6 @@ class Proof(object):
             if self.propagate_constraint(constraint_num, known_literals, constraints_to_process, constraints_to_process_set):
                 return None
             constraints_to_process_set.remove(constraint_num)
-        if save_known_literals:
-            self.known_literals = known_literals
-            self.constraints_that_unit_propagate.clear()
         return known_literals
 
     def process_u_line(self, line):
@@ -382,7 +378,6 @@ class Proof(object):
                 self.add_constraint_to_sequence(constraint)
                 if is_equality_constraint:
                     self.add_constraint_to_sequence(constraint.other_half_of_equality_constraint())
-        self.unit_propagate(True)
 
     def process_set_level_line(self, line):
         self.level = int(line[0])
