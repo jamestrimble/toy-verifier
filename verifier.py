@@ -140,12 +140,10 @@ class Proof(object):
 
     def add_constraint_to_sequence(self, constraint):
         self.add_constraint(constraint, self.constraint_num)
-#        print(self.constraint_num)
+#       print(self.constraint_num)
         self.constraint_num += 1
 
     def process_p_line(self, line):
-#        print("p line", line)
-#        print("p", self.constraint_num)
         stack = []
         pos = 0
         while pos < len(line):
@@ -165,18 +163,12 @@ class Proof(object):
                 constraint_num = int(line[pos])
                 if constraint_num == 0:
                     break
-#                print(" ", constraint_num, self.constraints[constraint_num])
                 stack.append(self.constraints[constraint_num].copy())
             pos += 1
         if len(stack) != 1:
             print("Stack length is {}!".format(len(stack)))
             exit(1)
         stack[0].simplify()
-#        print("---", self.constraint_num)
-#        print(" ", stack[0])
-#        print()
-#        print(self.constraints)
-#        print()
         self.add_constraint_to_sequence(stack[0])
 
 
@@ -221,15 +213,7 @@ class Proof(object):
             constraints_to_process_set.remove(constraint_num)
         return False
 
-    def unit_propagate_all_constraints(self):
-        for constraint_num in self.constraints:
-            constraint = self.constraints[constraint_num]
-            if self.unit_propagate(constraint):
-                return True
-        return False
-
     def process_u_line(self, line):
-#        print("u", self.constraint_num)
         self.add_constraint(make_opb_constraint(line).opposite(), -1)
         if not self.unit_propagate():
             print("Failed to do proof for u constraint")
