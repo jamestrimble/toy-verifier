@@ -30,10 +30,7 @@ class Constraint(object):
         self.make_canonical_form()
 
     def div_and_round_up(self, x, d):
-        retval = x // d
-        if retval * d < x:
-            retval += 1
-        return retval
+        return (x + d - 1) // d
 
     def make_canonical_form(self):
         rhs = self.rhs
@@ -116,6 +113,8 @@ class Proof(object):
         self.constraints_that_unit_propagate = set()
         for line in opb[1:]:
             self.add_constraint_to_sequence(make_opb_constraint(line))
+        self.unit_propagate(True)
+        self.constraints_that_unit_propagate.clear()
 
     def __repr__(self):
         return "Proof" + str(self.constraints)
@@ -199,9 +198,9 @@ class Proof(object):
 
         return False
 
-    def unit_propagate(self):
+    def unit_propagate(self, save_known_literals=False):
         """Return true iff unit propagation wipes out a constraint"""
-        known_literals = set()
+        known_literals = set() if save_known_literals else set(self.known_literals)
         constraints_to_process = deque()
         constraints_to_process_set = set(self.constraints_that_unit_propagate)
         for num in constraints_to_process_set:
@@ -211,6 +210,8 @@ class Proof(object):
             if self.propagate_constraint(constraint_num, known_literals, constraints_to_process, constraints_to_process_set):
                 return True
             constraints_to_process_set.remove(constraint_num)
+        if save_known_literals:
+            self.known_literals = known_literals
         return False
 
     def process_u_line(self, line):
