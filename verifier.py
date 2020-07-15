@@ -111,6 +111,7 @@ class Proof(object):
                                        for literal in [var, ~var]}
         self.constraints_that_unit_propagate = set()
         self.known_literals = set()
+        self.var_numbers = set()
 
     def __repr__(self):
         return "Proof" + str(self.constraints)
@@ -127,6 +128,7 @@ class Proof(object):
         else:
             var_num = self.next_var_num
             self.var_name_to_num[var] = var_num
+            self.var_numbers.add(var_num)
             self.next_var_num += 1
         return (coef, var_num), rhs_change
 
@@ -240,20 +242,38 @@ class Proof(object):
         while constraints_to_process:
             constraint_num = constraints_to_process.popleft()
             if self.propagate_constraint(constraint_num, known_literals, constraints_to_process, constraints_to_process_set):
-                return True
+                return None
             constraints_to_process_set.remove(constraint_num)
         if save_known_literals:
             self.known_literals = known_literals
             self.constraints_that_unit_propagate.clear()
-        return False
+        return known_literals
 
     def process_u_line(self, line):
         _, constraint = self.make_opb_constraint(line)
         self.add_constraint(constraint.opposite(), -1)
-        if not self.unit_propagate():
+        if self.unit_propagate() is not None:
             raise VerifierException("Failed to do proof for u constraint")
         self.delete_constraint(-1)
         self.add_constraint_to_sequence(constraint)
+
+    def process_v_line(self, line):
+        terms = {}
+        rhs = len(line)
+        for token in line:
+            (coef, var), rhs_change = self.parse_term("1", token)
+            terms[var] = coef
+            rhs += rhs_change
+        constraint = Constraint(terms, rhs)
+        self.add_constraint(constraint, -1)
+        known_literals = self.unit_propagate()
+        if known_literals is None:
+            raise VerifierException("v rule leads to contradiction")
+        known_vars = set(~lit if lit < 0 else lit for lit in known_literals)
+        if not known_vars.issuperset(self.var_numbers):
+            raise VerifierException("v rule does not lead to full assignment")
+        self.delete_constraint(-1)
+        self.add_constraint_to_sequence(constraint.opposite())
 
     def process_a_line(self, line):
         _, constraint = self.make_opb_constraint(line)
@@ -335,6 +355,7 @@ class Proof(object):
                                 "e": self.process_e_line,
                                 "u": self.process_u_line,
                                 "c": self.process_c_line,
+                                "v": self.process_v_line,
                                 "#": self.process_set_level_line,
                                 "w": self.process_wipe_level_line,
                                 "d": self.process_d_line}
