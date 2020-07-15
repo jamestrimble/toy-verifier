@@ -244,16 +244,13 @@ class Proof(object):
             exit(1)
 
     def process_line(self, line):
-        if line[0] == "p":
-            self.process_p_line(line[1:])
-        elif line[0] == "u":
-            self.process_u_line(line[1:])
-        elif line[0] == "c":
-            self.process_c_line(line[1:])
-        elif line[0] == "#":
-            self.process_set_level_line(line[1:])
-        elif line[0] == "w":
-            self.process_wipe_level_line(line[1:])
+        processing_functions = {"p": self.process_p_line,
+                                "u": self.process_u_line,
+                                "c": self.process_c_line,
+                                "#": self.process_set_level_line,
+                                "w": self.process_wipe_level_line}
+        if line[0] in processing_functions:
+            processing_functions[line[0]](line[1:])
 
 
 if __name__=="__main__":
