@@ -7,6 +7,7 @@ class VerifierException(Exception):
 
 class Constraint(object):
     def __init__(self, lhs, rhs):
+        # TODO: don't require all vars to be positive; convert them here if necessary
         self.lhs = lhs
         self.rhs = rhs
         self.make_canonical_form()
@@ -112,24 +113,37 @@ class Proof(object):
         self.constraints_that_unit_propagate = set()
         self.known_literals = set()
         self.var_numbers = set()
+        self.objective = None
 
     def __repr__(self):
         return "Proof" + str(self.constraints)
 
-    def parse_term(self, coef, var):
-        coef = int(coef)
-        rhs_change = 0
-        if var[0] == "~":
-            rhs_change = -coef
-            var = var[1:]
-            coef = -coef
-        if var in self.var_name_to_num:
-            var_num = self.var_name_to_num[var]
+    def parse_literal(self, lit_str):
+        if lit_str[0] == "~":
+            negated = True
+            var_str = lit_str[1:]
+        else:
+            negated = False
+            var_str = lit_str[:]
+        if var_str in self.var_name_to_num:
+            var_num = self.var_name_to_num[var_str]
         else:
             var_num = self.next_var_num
-            self.var_name_to_num[var] = var_num
+            self.var_name_to_num[var_str] = var_num
             self.var_numbers.add(var_num)
             self.next_var_num += 1
+        return ~var_num if negated else var_num
+
+    def parse_term(self, coef, lit_str):
+        coef = int(coef)
+        rhs_change = 0
+        literal = self.parse_literal(lit_str)
+        if literal < 0:
+            rhs_change = -coef
+            var_num = ~literal
+            coef = -coef
+        else:
+            var_num = literal
         return (coef, var_num), rhs_change
 
     def make_opb_constraint(self, line, equality_constraint_permitted=False):
@@ -257,6 +271,51 @@ class Proof(object):
         self.delete_constraint(-1)
         self.add_constraint_to_sequence(constraint)
 
+    def process_o_line(self, line):
+        vars_in_objective = set(~lit if lit<0 else lit for coef, lit in self.objective)
+        literals_in_line = set()
+        vars_in_line = set()
+        terms = {}
+        rhs = len(line)
+        for token in line:
+            literals_in_line.add(self.parse_literal(token))
+            (coef, var), rhs_change = self.parse_term("1", token)
+            if var in vars_in_line:
+                raise VerifierException("A variable appears more than once in an o line")
+            vars_in_line.add(var)
+            terms[var] = coef
+            rhs += rhs_change
+        if not vars_in_line.issuperset(vars_in_objective):
+            raise VerifierException("A variable appears in an o line but not in the objective")
+        constraint = Constraint(terms, rhs)
+        self.add_constraint(constraint, -1)
+        known_literals = self.unit_propagate()
+        if known_literals is None:
+            raise VerifierException("o rule leads to contradiction")
+        known_vars = set(~lit if lit < 0 else lit for lit in known_literals)
+        if not known_vars.issuperset(self.var_numbers):
+            raise VerifierException("o rule does not lead to full assignment")
+        self.delete_constraint(-1)
+        f_of_line = 0
+        for coef, lit in self.objective:
+            if lit in literals_in_line:
+                f_of_line += coef
+        print("f", f_of_line)
+        rhs = 1 - f_of_line
+        lhs = {}
+        for coef, lit in self.objective:
+            coef = -coef
+            if lit < 0:
+                var = ~lit
+                rhs -= coef
+                coef = -coef
+            else:
+                var = lit
+            lhs[var] = coef
+        constraint = Constraint(lhs, rhs)
+        print("(o)", constraint)
+        self.add_constraint_to_sequence(constraint)
+
     def process_v_line(self, line):
         terms = {}
         rhs = len(line)
@@ -310,7 +369,15 @@ class Proof(object):
 
     def process_f_line(self, line):
         for line in self.opb[1:]:
-            if line and line[0][0] != "*":
+            if not line:
+                continue
+            if line[0] == "min:":
+                self.objective = []
+                for i in range(1, len(line) - 1, 2):
+                    coef = int(line[i])
+                    literal = self.parse_literal(line[i+1])
+                    self.objective.append((coef, literal))
+            elif line[0][0] != "*":
                 is_equality_constraint, constraint = self.make_opb_constraint(line, True)
                 self.add_constraint_to_sequence(constraint)
                 if is_equality_constraint:
@@ -356,6 +423,7 @@ class Proof(object):
                                 "u": self.process_u_line,
                                 "c": self.process_c_line,
                                 "v": self.process_v_line,
+                                "o": self.process_o_line,
                                 "#": self.process_set_level_line,
                                 "w": self.process_wipe_level_line,
                                 "d": self.process_d_line}
