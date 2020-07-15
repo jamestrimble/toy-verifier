@@ -300,7 +300,7 @@ class Proof(object):
         for coef, lit in self.objective:
             if lit in literals_in_line:
                 f_of_line += coef
-        print("f", f_of_line)
+#        print("f", f_of_line)
         rhs = 1 - f_of_line
         lhs = {}
         for coef, lit in self.objective:
@@ -313,7 +313,7 @@ class Proof(object):
                 var = lit
             lhs[var] = coef
         constraint = Constraint(lhs, rhs)
-        print("(o)", constraint)
+#        print("(o)", constraint)
         self.add_constraint_to_sequence(constraint)
 
     def process_v_line(self, line):
