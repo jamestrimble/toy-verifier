@@ -140,6 +140,7 @@ class Proof(object):
 
     def add_constraint_to_sequence(self, constraint):
         self.add_constraint(constraint, self.constraint_num)
+#        print(self.constraint_num)
         self.constraint_num += 1
 
     def process_p_line(self, line):
@@ -184,13 +185,15 @@ class Proof(object):
         constraint = self.constraints[constraint_num]
         terms, rhs = constraint.canonical_form
         unassigned_terms = []
+        coef_sum = 0
         for coef, literal in terms:
             if literal in known_literals:
                 rhs -= coef
             elif ~literal not in known_literals:
                 unassigned_terms.append((coef, literal))
+                coef_sum += coef
 
-        slack = sum(coef for (coef, literal) in unassigned_terms) - rhs
+        slack = coef_sum - rhs
         if slack < 0:
             return True
 
