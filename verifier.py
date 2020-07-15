@@ -201,7 +201,6 @@ class Proof(object):
         stack[0].simplify()
         self.add_constraint_to_sequence(stack[0])
 
-
     def propagate_constraint(self, constraint_num, known_literals, constraints_to_process, constraints_to_process_set):
         # literals are stored as var-number (positive literal) or ~var-number (negated literal)
         constraint = self.constraints[constraint_num]
@@ -211,6 +210,8 @@ class Proof(object):
         for coef, literal in terms:
             if literal in known_literals:
                 rhs -= coef
+                if rhs <= 0:
+                    return False
             elif ~literal not in known_literals:
                 unassigned_terms.append((coef, literal))
                 coef_sum += coef
