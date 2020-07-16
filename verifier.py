@@ -6,24 +6,25 @@ class VerifierException(Exception):
     pass
 
 class Constraint(object):
-    def __init__(self, lhs, rhs):
+    def __init__(self, lhs, rhs, var_num_to_name):
         # TODO: don't require all vars to be positive; convert them here if necessary
         self.lhs = lhs
         self.rhs = rhs
+        self.var_num_to_name = var_num_to_name
         self.make_canonical_form()
 
     def copy(self):
-        return Constraint(dict(self.lhs), self.rhs)
+        return Constraint(dict(self.lhs), self.rhs, self.var_num_to_name)
 
     def opposite(self):
         new_lhs = {var: -coef for (var, coef) in self.lhs.items()}
         new_rhs = -(self.rhs - 1)
-        return Constraint(new_lhs, new_rhs)
+        return Constraint(new_lhs, new_rhs, self.var_num_to_name)
 
     def other_half_of_equality_constraint(self):
         new_lhs = {var: -coef for (var, coef) in self.lhs.items()}
         new_rhs = -self.rhs
-        return Constraint(new_lhs, new_rhs)
+        return Constraint(new_lhs, new_rhs, self.var_num_to_name)
 
     def simplify(self):
         self.lhs = {var: coef for (var, coef) in self.lhs.items() if coef != 0}
@@ -93,7 +94,11 @@ class Constraint(object):
         self.make_canonical_form()
 
     def __repr__(self):
-        return str(self.lhs) + " >= " + str(self.rhs)
+        return " ".join("{} {}".format(str(coef), self.var_num_to_name[var])
+                        for var, coef in self.lhs.items()) + " >= " + str(self.rhs)
+    def canonical_repr(self):
+        return " ".join("{} {}".format(str(coef), self.var_num_to_name[literal] if literal >= 0 else "~" + self.var_num_to_name[~literal])
+                        for coef, literal in self.canonical_form[0]) + " >= " + str(self.canonical_form[1])
 
         
 class Proof(object):
@@ -101,6 +106,7 @@ class Proof(object):
         self.opb = opb
         self.next_var_num = 1
         self.var_name_to_num = {}
+        self.var_num_to_name = {}
         self.levels = {}
         self.level = -1
         self.numvars = int(opb[0][2])
@@ -129,6 +135,7 @@ class Proof(object):
         else:
             var_num = self.next_var_num
             self.var_name_to_num[var_str] = var_num
+            self.var_num_to_name[var_num] = var_str
             self.var_numbers.add(var_num)
             self.next_var_num += 1
         return ~var_num if negated else var_num
@@ -161,7 +168,7 @@ class Proof(object):
             (coef, var_num), rhs_change = self.parse_term(line[i], line[i+1])
             lhs[var_num] = coef
             rhs += rhs_change
-        return is_equality_constraint, Constraint(lhs, rhs)
+        return is_equality_constraint, Constraint(lhs, rhs, self.var_num_to_name)
 
     def delete_constraint(self, num):
         if num in self.constraints_that_unit_propagate:
@@ -183,7 +190,10 @@ class Proof(object):
 
     def add_constraint_to_sequence(self, constraint):
         self.add_constraint(constraint, self.constraint_num)
-#       print(self.constraint_num)
+        if verbose == 1:
+            print("  {}: {}".format(self.constraint_num, constraint))
+        elif verbose == 2:
+            print("  {}: {}".format(self.constraint_num, constraint.canonical_repr()))
         self.constraint_num += 1
 
     def process_p_line(self, line):
@@ -203,7 +213,7 @@ class Proof(object):
                 del stack[-1]
             elif line[pos][0] not in "0123456789":
                 (coef, var_num), rhs = self.parse_term(1, line[pos])
-                stack.append(Constraint({var_num: coef}, rhs))
+                stack.append(Constraint({var_num: coef}, rhs, self.var_num_to_name))
             else:
                 constraint_num = int(line[pos])
                 if constraint_num == 0:
@@ -283,7 +293,7 @@ class Proof(object):
             rhs += rhs_change
         if not vars_in_line.issuperset(vars_in_objective):
             raise VerifierException("A variable appears in an o line but not in the objective")
-        constraint = Constraint(terms, rhs)
+        constraint = Constraint(terms, rhs, self.var_num_to_name)
         self.add_constraint(constraint, -1)
         known_literals = self.unit_propagate()
         if known_literals is None:
@@ -308,7 +318,7 @@ class Proof(object):
             else:
                 var = lit
             lhs[var] = coef
-        constraint = Constraint(lhs, rhs)
+        constraint = Constraint(lhs, rhs, self.var_num_to_name)
 #        print("(o)", constraint)
         self.add_constraint_to_sequence(constraint)
 
@@ -319,7 +329,7 @@ class Proof(object):
             (coef, var), rhs_change = self.parse_term("1", token)
             terms[var] = coef
             rhs += rhs_change
-        constraint = Constraint(terms, rhs)
+        constraint = Constraint(terms, rhs, self.var_num_to_name)
         self.add_constraint(constraint, -1)
         known_literals = self.unit_propagate()
         if known_literals is None:
@@ -423,6 +433,8 @@ class Proof(object):
                                 "w": self.process_wipe_level_line,
                                 "d": self.process_d_line}
         if line:
+            if verbose:
+                print(" ".join(line))
             if line[0] in processing_functions:
                 processing_functions[line[0]](line[1:])
             elif line[0][0] != "*" and line[0] != "pseudo-Boolean":
@@ -430,6 +442,12 @@ class Proof(object):
 
 
 if __name__=="__main__":
+    verbose = 0
+    if len(sys.argv) > 3:
+        if sys.argv[3] == "--verbose":
+            verbose = 1
+        elif sys.argv[3] == "--canonical":
+            verbose = 2
     with open(sys.argv[1], "r") as f:
         opb_lines = [line.strip().split() for line in f.readlines()]
     proof = Proof(opb_lines)
@@ -440,8 +458,10 @@ if __name__=="__main__":
     line_num = 0
     with open(sys.argv[2], "r") as f:
         for line in f.readlines():
-            sys.stdout.write("\rprogress: {}%".format(int(line_num / line_count * 100)))
+            if not verbose:
+                sys.stdout.write("\rprogress: {}%".format(int(line_num / line_count * 100)))
             line = line.strip().split()
             proof.process_line(line)
             line_num += 1
-    print("\rprogress: 100%")
+    if not verbose:
+        print("\rprogress: 100%")

@@ -10,6 +10,12 @@ more thoroughly tested.
 The input format is the same as that of
 [VeriPB](https://github.com/StephanGocht/VeriPB).
 
+## Usage
+
+```
+python3 toy-verifier.py model.opb proof.proof [--verbose|--canonical]
+```
+
 ## Notes on design and limitations
 
 toy-verifier was written in a hurry, so I am sure the design is suboptimal.  I
