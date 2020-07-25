@@ -9,7 +9,7 @@ class Constraint(object):
     def __init__(self, lhs, rhs, var_num_to_name):
         self.lhs = {}
         self.rhs = rhs
-        for literal, coef in lhs.items():
+        for coef, literal in lhs:
             if literal in self.lhs or ~literal in self.lhs:
                 raise VerifierException("Duplicate variable.")
             if coef < 0:
@@ -22,15 +22,15 @@ class Constraint(object):
         self.var_num_to_name = var_num_to_name
 
     def copy(self):
-        return Constraint(self.lhs, self.rhs, self.var_num_to_name)
+        return Constraint([(coef, lit) for lit, coef in self.lhs.items()], self.rhs, self.var_num_to_name)
 
     def opposite(self):
-        new_lhs = {var: -coef for (var, coef) in self.lhs.items()}
+        new_lhs = [(-coef, literal) for literal, coef in self.lhs.items()]
         new_rhs = -(self.rhs - 1)
         return Constraint(new_lhs, new_rhs, self.var_num_to_name)
 
     def other_half_of_equality_constraint(self):
-        new_lhs = {var: -coef for (var, coef) in self.lhs.items()}
+        new_lhs = [(-coef, literal) for literal, coef in self.lhs.items()]
         new_rhs = -self.rhs
         return Constraint(new_lhs, new_rhs, self.var_num_to_name)
 
@@ -134,14 +134,14 @@ class Proof(object):
         is_equality_constraint = line[-2] == "="
         if is_equality_constraint and not equality_constraint_permitted:
             raise VerifierException("Equality constraint not permitted here!")
-        lhs = {} 
+        lhs = []
         if line[-1][-1] == ";":
             line[-1] = line[-1][:-1]
         rhs = int(line[-1])
         for i in range(0, len(line)-2, 2):
             coef = int(line[i])
             literal = self.parse_literal(line[i+1])
-            lhs[literal] = coef
+            lhs.append((coef, literal))
         return is_equality_constraint, Constraint(lhs, rhs, self.var_name_num_map.var_num_to_name)
 
     def delete_constraint(self, num):
@@ -177,7 +177,7 @@ class Proof(object):
                 del stack[-1]
             elif line[pos][0] not in "0123456789":
                 literal = self.parse_literal(line[pos])
-                stack.append(Constraint({literal: 1}, 0, self.var_name_num_map.var_num_to_name))
+                stack.append(Constraint([(1, literal)], 0, self.var_name_num_map.var_num_to_name))
             else:
                 constraint_num = int(line[pos])
                 if constraint_num == 0:
@@ -233,31 +233,22 @@ class Proof(object):
 
     def process_o_line(self, line):
         vars_in_objective = set(~lit if lit<0 else lit for coef, lit in self.objective)
-        literals_in_line = set()
-        vars_in_line = set()
+        literals_in_line = set(self.parse_literal(token) for token in line)
         rhs = len(line)
-        for token in line:
-            literal = self.parse_literal(token)
-            literals_in_line.add(literal)
-            var = literal if literal >= 0 else ~literal
-            if var in vars_in_line:
-                raise VerifierException("A variable appears more than once in an o line")
-            vars_in_line.add(var)
+        vars_in_line = set(literal if literal >= 0 else ~literal for literal in literals_in_line)
         if not vars_in_line.issuperset(vars_in_objective):
             raise VerifierException("A variable appears in an o line but not in the objective")
-        constraint = Constraint({lit: 1 for lit in literals_in_line}, rhs, self.var_name_num_map.var_num_to_name)
-        # TODO: see if more common code with process_v_line can be extracted too.
+        constraint = Constraint([(1, lit) for lit in literals_in_line], rhs, self.var_name_num_map.var_num_to_name)
         self.unit_propagate_solution(constraint, "o")
         f_of_line = 0
         for coef, lit in self.objective:
             if lit in literals_in_line:
                 f_of_line += coef
-        lhs = {lit: -coef for coef, lit in self.objective}
+        lhs = [(-coef, lit) for coef, lit in self.objective]
         self.add_constraint_to_sequence(Constraint(lhs, 1 - f_of_line, self.var_name_num_map.var_num_to_name))
 
     def process_v_line(self, line):
-        # TODO: check for duplicate vars
-        terms = {self.parse_literal(token): 1 for token in line}
+        terms = [(1, self.parse_literal(token)) for token in line]
         rhs = len(line)
         constraint = Constraint(terms, rhs, self.var_name_num_map.var_num_to_name)
         self.unit_propagate_solution(constraint, "v")
