@@ -13,7 +13,7 @@ The input format is the same as that of
 ## Usage
 
 ```
-python3 toy-verifier.py model.opb proof.proof [--verbose|--canonical]
+python3 toy-verifier.py model.opb proof.proof [--verbose]
 ```
 
 ## Notes on design and limitations
@@ -27,12 +27,8 @@ a positive integer representing the variable of that number, and a negative
 integer `lit` representing the negation of the variable whose number is `~lit`.
 
 Each `Constraint` is a >= constraint.  The left-hand side is represented as a
-map from variable number to coefficent.  Constraints are stored with only
-positive literals and possibly-negative coefficients.  Each `Constraint` also
-stores its canonical form (with only positive coefficients and a non-negative
-right-hand side) in the `canonical_form` field.  This is a 2-tuple, with the
-first element being a list of `(coef, literal)` pairs, and the second element
-being the right-hand side.
+map from literal to coefficent, in canonical form (with only positive
+coefficients and a non-negative right-hand side).
 
 Unit propagation is done in a very simple way without watched literals, which
 is why it is so slow!
