@@ -7,14 +7,22 @@ class VerifierException(Exception):
 
 class Constraint(object):
     def __init__(self, lhs, rhs, var_num_to_name):
-        # TODO: don't require all vars to be positive; convert them here if necessary
-        self.lhs = lhs
+        self.lhs = {}
         self.rhs = rhs
+        for literal, coef in lhs.items():
+            if literal in self.lhs or ~literal in self.lhs:
+                raise VerifierException("Duplicate variable.")
+            if coef < 0:
+                literal = ~literal
+                self.rhs -= coef
+                coef = -coef
+            self.lhs[literal] = coef
+        if self.rhs < 0:
+            self.rhs = 0
         self.var_num_to_name = var_num_to_name
-        self.make_canonical_form()
 
     def copy(self):
-        return Constraint(dict(self.lhs), self.rhs, self.var_num_to_name)
+        return Constraint(self.lhs, self.rhs, self.var_num_to_name)
 
     def opposite(self):
         new_lhs = {var: -coef for (var, coef) in self.lhs.items()}
@@ -26,131 +34,97 @@ class Constraint(object):
         new_rhs = -self.rhs
         return Constraint(new_lhs, new_rhs, self.var_num_to_name)
 
-    def simplify(self):
-        self.lhs = {var: coef for (var, coef) in self.lhs.items() if coef != 0}
-        self.make_canonical_form()
-
     def add_constraint(self, c):
-        for var_num in c.lhs:
-            try:
-                self.lhs[var_num] += c.lhs[var_num]
-            except:
-                self.lhs[var_num] = c.lhs[var_num]
+        for literal, coef in c.lhs.items():
+            if literal in self.lhs:
+                self.lhs[literal] += coef
+            elif ~literal in self.lhs:
+                if self.lhs[~literal] > coef:
+                    self.rhs -= coef
+                    self.lhs[~literal] -= coef
+                if self.lhs[~literal] == coef:
+                    self.rhs -= coef
+                    del self.lhs[~literal]
+                else:
+                    self.rhs -= self.lhs[~literal]
+                    self.lhs[literal] = coef - self.lhs[~literal]
+                    del self.lhs[~literal]
+            else:
+                self.lhs[literal] = coef
         self.rhs += c.rhs
-        self.make_canonical_form()
 
     def div_and_round_up(self, x, d):
         return (x + d - 1) // d
 
-    def make_canonical_form(self):
-        rhs = self.rhs
-        terms = []
-        for var, coef in self.lhs.items():
-            if coef < 0:
-                literal = ~var
-                rhs -= coef
-                coef = -coef
-            else:
-                literal = var
-            terms.append((coef, literal))
-        if rhs < 0:
-            rhs = 0
-        self.canonical_form = (terms, rhs)
-
     def saturate(self):
-        terms, rhs = self.canonical_form
-        for coef, literal in terms:
-            if coef > rhs:
-                coef = rhs
-            if literal < 0:
-                var = ~literal
-                rhs -= coef
-                coef = -coef
-            else:
-                var = literal
-            self.lhs[var] = coef
-        self.rhs = rhs
-        self.make_canonical_form()
+        for literal in self.lhs:
+            if self.lhs[literal] > self.rhs:
+                self.lhs[literal] = self.rhs
 
     def divide(self, d):
-        terms, rhs = self.canonical_form
-        rhs = self.div_and_round_up(rhs, d)
-        for coef, literal in terms:
-            coef = self.div_and_round_up(coef, d)
-            if literal < 0:
-                var = ~literal
-                rhs -= coef
-                coef = -coef
-            else:
-                var = literal
-            self.lhs[var] = coef
-        self.rhs = rhs
-        self.make_canonical_form()
+        if d <= 0:
+            raise VerifierException("Trying to divide by {}".format(d))
+        self.rhs = self.div_and_round_up(self.rhs, d)
+        for literal in self.lhs:
+            self.lhs[literal] = self.div_and_round_up(self.lhs[literal], d)
 
     def multiply(self, m):
+        if m <= 0:
+            raise VerifierException("Trying to multiply by {}".format(m))
         for var_num in self.lhs:
             self.lhs[var_num] *= m
         self.rhs *= m
-        self.make_canonical_form()
+
+    def literal_to_name(self, literal):
+        if literal >= 0:
+            return self.var_num_to_name[literal]
+        else:
+            return "~" + self.var_num_to_name[~literal]
 
     def __repr__(self):
-        return " ".join("{} {}".format(str(coef), self.var_num_to_name[var])
-                        for var, coef in self.lhs.items()) + " >= " + str(self.rhs)
-    def canonical_repr(self):
-        return " ".join("{} {}".format(str(coef), self.var_num_to_name[literal] if literal >= 0 else "~" + self.var_num_to_name[~literal])
-                        for coef, literal in self.canonical_form[0]) + " >= " + str(self.canonical_form[1])
+        terms = sorted(self.lhs.items(), key=lambda term: term[0] if term[0] >= 0 else ~term[0])
+        return " ".join("{} {}".format(str(coef), self.literal_to_name(literal))
+                        for literal, coef in terms) + " >= " + str(self.rhs)
 
-        
+
+class VarNameNumMap(object):
+    def __init__(self):
+        self.next_var_num = 0
+        self.var_name_to_num = {}
+        self.var_num_to_name = {}
+
+    def get_num(self, var_str):
+        try:
+            return self.var_name_to_num[var_str]
+        except KeyError:
+            var_num = self.next_var_num
+            self.var_name_to_num[var_str] = var_num
+            self.var_num_to_name[var_num] = var_str
+            self.next_var_num += 1
+            return var_num
+
+
 class Proof(object):
     def __init__(self, opb):
         self.opb = opb
-        self.next_var_num = 1
-        self.var_name_to_num = {}
-        self.var_num_to_name = {}
+        self.var_name_num_map = VarNameNumMap()
         self.levels = {}
         self.level = -1
+        self.constraint_num = 1
+        self.constraints = {}
+        self.objective = None
         self.numvars = int(opb[0][2])
         self.numcons = int(opb[0][4])
         print(self.numvars, self.numcons)
-        self.constraint_num = 1
-        self.constraints = {}
-        self.literal_to_constraints = {literal: set() for var in range(1, self.numvars + 1)
-                                       for literal in [var, ~var]}
-        self.constraints_that_unit_propagate = set()
-        self.var_numbers = set()
-        self.objective = None
 
     def __repr__(self):
         return "Proof" + str(self.constraints)
 
     def parse_literal(self, lit_str):
         if lit_str[0] == "~":
-            negated = True
-            var_str = lit_str[1:]
+            return ~self.var_name_num_map.get_num(lit_str[1:])
         else:
-            negated = False
-            var_str = lit_str[:]
-        if var_str in self.var_name_to_num:
-            var_num = self.var_name_to_num[var_str]
-        else:
-            var_num = self.next_var_num
-            self.var_name_to_num[var_str] = var_num
-            self.var_num_to_name[var_num] = var_str
-            self.var_numbers.add(var_num)
-            self.next_var_num += 1
-        return ~var_num if negated else var_num
-
-    def parse_term(self, coef, lit_str):
-        coef = int(coef)
-        rhs_change = 0
-        literal = self.parse_literal(lit_str)
-        if literal < 0:
-            rhs_change = -coef
-            var_num = ~literal
-            coef = -coef
-        else:
-            var_num = literal
-        return (coef, var_num), rhs_change
+            return self.var_name_num_map.get_num(lit_str)
 
     def make_opb_constraint(self, line, equality_constraint_permitted=False):
         if line[-1] == ";":
@@ -165,35 +139,25 @@ class Proof(object):
             line[-1] = line[-1][:-1]
         rhs = int(line[-1])
         for i in range(0, len(line)-2, 2):
-            (coef, var_num), rhs_change = self.parse_term(line[i], line[i+1])
-            lhs[var_num] = coef
-            rhs += rhs_change
-        return is_equality_constraint, Constraint(lhs, rhs, self.var_num_to_name)
+            coef = int(line[i])
+            literal = self.parse_literal(line[i+1])
+            lhs[literal] = coef
+        return is_equality_constraint, Constraint(lhs, rhs, self.var_name_num_map.var_num_to_name)
 
     def delete_constraint(self, num):
-        if num in self.constraints_that_unit_propagate:
-            self.constraints_that_unit_propagate.remove(num)
-        for coef, literal in self.constraints[num].canonical_form[0]:
-            self.literal_to_constraints[literal].remove(num)
         del self.constraints[num]
 
     def add_constraint(self, constraint, num):
-        terms, rhs = constraint.canonical_form
-        slack = sum(coef for (coef, literal) in terms) - rhs
-        if len(terms)==1 or any(coef > slack for (coef, literal) in terms):
-            self.constraints_that_unit_propagate.add(num)
-        for coef, literal in constraint.canonical_form[0]:
-            self.literal_to_constraints[literal].add(num)
+        terms = constraint.lhs.items()
+        slack = sum(coef for (literal, coef) in terms) - constraint.rhs
         if self.level != -1 and num != -1:
             self.levels[self.level].append(num)
         self.constraints[num] = constraint
 
     def add_constraint_to_sequence(self, constraint):
         self.add_constraint(constraint, self.constraint_num)
-        if verbose == 1:
+        if verbose:
             print("  {}: {}".format(self.constraint_num, constraint))
-        elif verbose == 2:
-            print("  {}: {}".format(self.constraint_num, constraint.canonical_repr()))
         self.constraint_num += 1
 
     def process_p_line(self, line):
@@ -212,8 +176,8 @@ class Proof(object):
                 stack[-2].add_constraint(stack[-1])
                 del stack[-1]
             elif line[pos][0] not in "0123456789":
-                (coef, var_num), rhs = self.parse_term(1, line[pos])
-                stack.append(Constraint({var_num: coef}, rhs, self.var_num_to_name))
+                literal = self.parse_literal(line[pos])
+                stack.append(Constraint({literal: 1}, 0, self.var_name_num_map.var_num_to_name))
             else:
                 constraint_num = int(line[pos])
                 if constraint_num == 0:
@@ -223,51 +187,31 @@ class Proof(object):
         if len(stack) != 1:
             print(line)
             raise VerifierException("Stack length is {}!".format(len(stack)))
-        stack[0].simplify()
         self.add_constraint_to_sequence(stack[0])
 
-    def propagate_constraint(self, constraint_num, known_literals, constraints_to_process, constraints_to_process_set):
-        # literals are stored as var-number (positive literal) or ~var-number (negated literal)
-        constraint = self.constraints[constraint_num]
-        terms, rhs = constraint.canonical_form
-        unassigned_terms = []
-        coef_sum = 0
-        for coef, literal in terms:
-            if literal in known_literals:
-                rhs -= coef
-                if rhs <= 0:
-                    return False
-            elif ~literal not in known_literals:
-                unassigned_terms.append((coef, literal))
-                coef_sum += coef
-
-        slack = coef_sum - rhs
-        if slack < 0:
-            return True
-
-        for coef, literal in unassigned_terms:
-            if coef > slack:
-                known_literals.add(literal)
-                for constraint_num in self.literal_to_constraints[~literal]:
-                    if constraint_num not in constraints_to_process_set:
-                        constraints_to_process.append(constraint_num)
-                        constraints_to_process_set.add(constraint_num)
-
-        return False
-
     def unit_propagate(self):
-        """Return true iff unit propagation wipes out a constraint"""
+        """Return None iff unit propagation wipes out a constraint"""
         known_literals = set()
-        constraints_to_process = deque()
-        constraints_to_process_set = set(self.constraints_that_unit_propagate)
-        for num in constraints_to_process_set:
-            constraints_to_process.append(num)
-        while constraints_to_process:
-            constraint_num = constraints_to_process.popleft()
-            if self.propagate_constraint(constraint_num, known_literals, constraints_to_process, constraints_to_process_set):
-                return None
-            constraints_to_process_set.remove(constraint_num)
-        return known_literals
+        while True:
+            prev_known_literals_sz = len(known_literals)
+            for constraint in self.constraints.values():
+                rhs = constraint.rhs
+                unassigned_terms = []
+                coef_sum = 0
+                for literal, coef in constraint.lhs.items():
+                    if literal in known_literals:
+                        rhs -= coef
+                    elif ~literal not in known_literals:
+                        unassigned_terms.append((coef, literal))
+                        coef_sum += coef
+                slack = coef_sum - rhs
+                if slack < 0:
+                    return None
+                for coef, literal in unassigned_terms:
+                    if coef > slack:
+                        known_literals.add(literal)
+            if len(known_literals) == prev_known_literals_sz:
+                return known_literals
 
     def process_u_line(self, line):
         _, constraint = self.make_opb_constraint(line)
@@ -277,67 +221,46 @@ class Proof(object):
         self.delete_constraint(-1)
         self.add_constraint_to_sequence(constraint)
 
+    def unit_propagate_solution(self, constraint, line_type):
+        self.add_constraint(constraint, -1)
+        known_literals = self.unit_propagate()
+        if known_literals is None:
+            raise VerifierException("{} rule leads to contradiction".format(line_type))
+        known_vars = set(~lit if lit < 0 else lit for lit in known_literals)
+        if not known_vars.issuperset(set(self.var_name_num_map.var_num_to_name.keys())):
+            raise VerifierException("{} rule does not lead to full assignment".format(line_type))
+        self.delete_constraint(-1)
+
     def process_o_line(self, line):
         vars_in_objective = set(~lit if lit<0 else lit for coef, lit in self.objective)
         literals_in_line = set()
         vars_in_line = set()
-        terms = {}
         rhs = len(line)
         for token in line:
-            literals_in_line.add(self.parse_literal(token))
-            (coef, var), rhs_change = self.parse_term("1", token)
+            literal = self.parse_literal(token)
+            literals_in_line.add(literal)
+            var = literal if literal >= 0 else ~literal
             if var in vars_in_line:
                 raise VerifierException("A variable appears more than once in an o line")
             vars_in_line.add(var)
-            terms[var] = coef
-            rhs += rhs_change
         if not vars_in_line.issuperset(vars_in_objective):
             raise VerifierException("A variable appears in an o line but not in the objective")
-        constraint = Constraint(terms, rhs, self.var_num_to_name)
-        self.add_constraint(constraint, -1)
-        known_literals = self.unit_propagate()
-        if known_literals is None:
-            raise VerifierException("o rule leads to contradiction")
-        known_vars = set(~lit if lit < 0 else lit for lit in known_literals)
-        if not known_vars.issuperset(self.var_numbers):
-            raise VerifierException("o rule does not lead to full assignment")
-        self.delete_constraint(-1)
+        constraint = Constraint({lit: 1 for lit in literals_in_line}, rhs, self.var_name_num_map.var_num_to_name)
+        # TODO: see if more common code with process_v_line can be extracted too.
+        self.unit_propagate_solution(constraint, "o")
         f_of_line = 0
         for coef, lit in self.objective:
             if lit in literals_in_line:
                 f_of_line += coef
-#        print("f", f_of_line)
-        rhs = 1 - f_of_line
-        lhs = {}
-        for coef, lit in self.objective:
-            coef = -coef
-            if lit < 0:
-                var = ~lit
-                rhs -= coef
-                coef = -coef
-            else:
-                var = lit
-            lhs[var] = coef
-        constraint = Constraint(lhs, rhs, self.var_num_to_name)
-#        print("(o)", constraint)
-        self.add_constraint_to_sequence(constraint)
+        lhs = {lit: -coef for coef, lit in self.objective}
+        self.add_constraint_to_sequence(Constraint(lhs, 1 - f_of_line, self.var_name_num_map.var_num_to_name))
 
     def process_v_line(self, line):
-        terms = {}
+        # TODO: check for duplicate vars
+        terms = {self.parse_literal(token): 1 for token in line}
         rhs = len(line)
-        for token in line:
-            (coef, var), rhs_change = self.parse_term("1", token)
-            terms[var] = coef
-            rhs += rhs_change
-        constraint = Constraint(terms, rhs, self.var_num_to_name)
-        self.add_constraint(constraint, -1)
-        known_literals = self.unit_propagate()
-        if known_literals is None:
-            raise VerifierException("v rule leads to contradiction")
-        known_vars = set(~lit if lit < 0 else lit for lit in known_literals)
-        if not known_vars.issuperset(self.var_numbers):
-            raise VerifierException("v rule does not lead to full assignment")
-        self.delete_constraint(-1)
+        constraint = Constraint(terms, rhs, self.var_name_num_map.var_num_to_name)
+        self.unit_propagate_solution(constraint, "v")
         self.add_constraint_to_sequence(constraint.opposite())
 
     def process_a_line(self, line):
@@ -347,22 +270,27 @@ class Proof(object):
     def process_e_line(self, line):
         C = self.constraints[int(line[0])]
         _, D = self.make_opb_constraint(line[1:])
-        for var, coef in C.lhs.items():
-            if var not in D.lhs or coef != D.lhs[var]:
+        for literal, coef in C.lhs.items():
+            if literal not in D.lhs or coef != D.lhs[literal]:
                 raise VerifierException()
-        for var, coef in D.lhs.items():
-            if var not in C.lhs or coef != C.lhs[var]:
+        for literal, coef in D.lhs.items():
+            if literal not in C.lhs or coef != C.lhs[literal]:
                 raise VerifierException()
         if D.rhs != C.rhs:
             raise VerifierException("D.rhs != C.rhs")
 
     def process_ij_line(self, line, add_to_sequence):
         C = self.constraints[int(line[0])]
-        _, D = self.make_opb_constraint(line[1:])
-        for var, coef in C.lhs.items():
-            if var not in D.lhs or (coef>=0) != (D.lhs[var]>=0):
-                raise VerifierException()
-        if D.rhs > C.rhs:
+        is_equality_constraint, D = self.make_opb_constraint(line[1:])
+        if is_equality_constraint:
+            raise VerifierException("Wasn't expecting an equality constraint.")
+        change = 0
+        for literal, coef in D.lhs.items():
+            if ~literal in C.lhs:
+                change += C.lhs[~literal]
+            elif literal in C.lhs and coef < C.lhs[literal]:
+                change += C.lhs[literal] - coef
+        if D.rhs > C.rhs - change:
             raise VerifierException("D.rhs > C.rhs")
         if add_to_sequence:
             self.add_constraint_to_sequence(D)
@@ -442,12 +370,10 @@ class Proof(object):
 
 
 if __name__=="__main__":
-    verbose = 0
+    verbose = False
     if len(sys.argv) > 3:
         if sys.argv[3] == "--verbose":
-            verbose = 1
-        elif sys.argv[3] == "--canonical":
-            verbose = 2
+            verbose = True
     with open(sys.argv[1], "r") as f:
         opb_lines = [line.strip().split() for line in f.readlines()]
     proof = Proof(opb_lines)
