@@ -22,9 +22,8 @@ toy-verifier was written in a hurry, so I am sure the design is suboptimal.  I
 borrowed a few ideas from the code of VeriPB, but if you're wondering how to
 write a good verifier, the VeriPB code is a much better place to look.
 
-Variable numbers are positive integers.  Literals are stored as integers, with
-a positive integer representing the variable of that number, and a negative
-integer `lit` representing the negation of the variable whose number is `~lit`.
+Literals are stored as strings using the original variable names, with a
+leading tilde (~) indicating a negated variable.
 
 Each `Constraint` is a >= constraint.  The left-hand side is represented as a
 map from literal to coefficent, in canonical form (with only positive
@@ -32,6 +31,3 @@ coefficients and a non-negative right-hand side).
 
 Unit propagation is done in a very simple way without watched literals, which
 is why it is so slow!
-
-The parser does not check carefully for syntax errors in the OPB and proof
-files.
