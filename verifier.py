@@ -194,11 +194,10 @@ class Verifier(object):
     def process_o_rule(self, line):
         vars_in_objective = set(lit2var(lit) for coef, lit in self.objective)
         literals_in_line = set(line)
-        rhs = len(line)
         vars_in_line = set(lit2var(literal) for literal in literals_in_line)
         if not vars_in_line.issuperset(vars_in_objective):
             raise VerifierException("A variable appears in an the objective but not in an o line")
-        constraint = Constraint([(1, lit) for lit in literals_in_line], rhs)
+        constraint = Constraint([(1, lit) for lit in literals_in_line], len(line))
         self.unit_propagate_solution(constraint, "o")
         f_of_line = sum(coef for coef, lit in self.objective if lit in literals_in_line)
         lhs = [(-coef, lit) for coef, lit in self.objective]
@@ -206,8 +205,7 @@ class Verifier(object):
 
     def process_v_rule(self, line):
         terms = [(1, token) for token in line]
-        rhs = len(line)
-        constraint = Constraint(terms, rhs)
+        constraint = Constraint(terms, len(line))
         self.unit_propagate_solution(constraint, "v")
         self.add_constraint_to_sequence(constraint.opposite())
 
