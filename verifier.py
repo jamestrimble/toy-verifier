@@ -67,27 +67,23 @@ class Constraint(object):
     def divide(self, d):
         if d <= 0:
             raise VerifierException("Trying to divide by {}".format(d))
-        self.rhs = self.div_and_round_up(self.rhs, d)
         for literal in self.lhs:
             self.lhs[literal] = self.div_and_round_up(self.lhs[literal], d)
+        self.rhs = self.div_and_round_up(self.rhs, d)
 
     def multiply(self, m):
         if m <= 0:
             raise VerifierException("Trying to multiply by {}".format(m))
-        for var_num in self.lhs:
-            self.lhs[var_num] *= m
+        for literal in self.lhs:
+            self.lhs[literal] *= m
         self.rhs *= m
 
     def equals(self, other):
-        for literal, coef in self.lhs.items():
-            if literal not in other.lhs or coef != other.lhs[literal]:
-                return False
-        for literal, coef in other.lhs.items():
-            if literal not in self.lhs or coef != self.lhs[literal]:
-                return False
-        if other.rhs != self.rhs:
-            return False
-        return True
+        for lhs1, lhs2 in [(self.lhs, other.lhs), (other.lhs, self.lhs)]:
+            for literal, coef in lhs1.items():
+                if literal not in lhs2 or coef != lhs2[literal]:
+                    return False
+        return other.rhs == self.rhs
 
     def syntactically_implies(self, other):
         change = 0
@@ -129,7 +125,6 @@ def solve_p_line(line, constraints):
             stack.append(constraints[constraint_num].copy())
         pos += 1
     if len(stack) != 1:
-        print(line)
         raise VerifierException("Stack length is {}!".format(len(stack)))
     return stack[0]
 
@@ -175,8 +170,6 @@ class Verifier(object):
         del self.constraints[num]
 
     def add_constraint_to_sequence(self, constraint):
-        terms = constraint.lhs.items()
-        slack = sum(coef for (literal, coef) in terms) - constraint.rhs
         if self.level != -1:
             self.levels[self.level].append(self.next_constraint_num)
         self.constraints[self.next_constraint_num] = constraint
@@ -209,10 +202,7 @@ class Verifier(object):
             raise VerifierException("A variable appears in an the objective but not in an o line")
         constraint = Constraint([(1, lit) for lit in literals_in_line], rhs)
         self.unit_propagate_solution(constraint, "o")
-        f_of_line = 0
-        for coef, lit in self.objective:
-            if lit in literals_in_line:
-                f_of_line += coef
+        f_of_line = sum(coef for coef, lit in self.objective if lit in literals_in_line)
         lhs = [(-coef, lit) for coef, lit in self.objective]
         self.add_constraint_to_sequence(Constraint(lhs, 1 - f_of_line))
 
