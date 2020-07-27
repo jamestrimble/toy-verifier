@@ -5,50 +5,55 @@ from collections import deque
 class VerifierException(Exception):
     pass
 
+def negated(literal):
+    return literal[1:] if literal[0] == "~" else "~" + literal
+
+def lit2var(literal):
+    return literal[1:] if literal[0] == "~" else literal
+
 class Constraint(object):
-    def __init__(self, lhs, rhs, var_num_to_name):
+    def __init__(self, lhs, rhs):
         self.lhs = {}
         self.rhs = rhs
         for coef, literal in lhs:
-            if literal in self.lhs or ~literal in self.lhs:
+            if literal in self.lhs or negated(literal) in self.lhs:
                 raise VerifierException("Duplicate variable.")
             if coef < 0:
-                literal = ~literal
+                literal = negated(literal)
                 self.rhs -= coef
                 coef = -coef
             self.lhs[literal] = coef
         if self.rhs < 0:
             self.rhs = 0
-        self.var_num_to_name = var_num_to_name
 
     def copy(self):
-        return Constraint([(coef, lit) for lit, coef in self.lhs.items()], self.rhs, self.var_num_to_name)
+        return Constraint([(coef, lit) for lit, coef in self.lhs.items()], self.rhs)
 
     def opposite(self):
         new_lhs = [(-coef, literal) for literal, coef in self.lhs.items()]
         new_rhs = -(self.rhs - 1)
-        return Constraint(new_lhs, new_rhs, self.var_num_to_name)
+        return Constraint(new_lhs, new_rhs)
 
     def other_half_of_equality_constraint(self):
         new_lhs = [(-coef, literal) for literal, coef in self.lhs.items()]
         new_rhs = -self.rhs
-        return Constraint(new_lhs, new_rhs, self.var_num_to_name)
+        return Constraint(new_lhs, new_rhs)
 
     def add_constraint(self, c):
         for literal, coef in c.lhs.items():
             if literal in self.lhs:
                 self.lhs[literal] += coef
-            elif ~literal in self.lhs:
-                if self.lhs[~literal] > coef:
+            elif negated(literal) in self.lhs:
+                if self.lhs[negated(literal)] > coef:
                     self.rhs -= coef
-                    self.lhs[~literal] -= coef
-                if self.lhs[~literal] == coef:
+                    self.lhs[negated(literal)] -= coef
+                if self.lhs[negated(literal)] == coef:
                     self.rhs -= coef
-                    del self.lhs[~literal]
+                    del self.lhs[negated(literal)]
                 else:
-                    self.rhs -= self.lhs[~literal]
-                    self.lhs[literal] = coef - self.lhs[~literal]
-                    del self.lhs[~literal]
+                    self.rhs -= self.lhs[negated(literal)]
+                    self.lhs[literal] = coef - self.lhs[negated(literal)]
+                    del self.lhs[negated(literal)]
             else:
                 self.lhs[literal] = coef
         self.rhs += c.rhs
@@ -89,66 +94,19 @@ class Constraint(object):
     def syntactically_implies(self, other):
         change = 0
         for literal, coef in other.lhs.items():
-            if ~literal in self.lhs:
-                change += self.lhs[~literal]
+            if negated(literal) in self.lhs:
+                change += self.lhs[negated(literal)]
             elif literal in self.lhs and coef < self.lhs[literal]:
                 change += self.lhs[literal] - coef
         return other.rhs <= self.rhs - change
 
-    def literal_to_name(self, literal):
-        if literal >= 0:
-            return self.var_num_to_name[literal]
-        else:
-            return "~" + self.var_num_to_name[~literal]
-
     def __repr__(self):
-        terms = sorted(self.lhs.items(), key=lambda term: term[0] if term[0] >= 0 else ~term[0])
-        return " ".join("{} {}".format(str(coef), self.literal_to_name(literal))
+        terms = sorted(self.lhs.items(), key=lambda term: lit2var(term[0]))
+        return " ".join("{} {}".format(str(coef), literal)
                         for literal, coef in terms) + " >= " + str(self.rhs)
 
 
-class VarNameNumMap(object):
-    def __init__(self):
-        self.next_var_num = 0
-        self.var_name_to_num = {}
-        self.var_num_to_name = {}
-
-    def get_num(self, var_str):
-        try:
-            return self.var_name_to_num[var_str]
-        except KeyError:
-            var_num = self.next_var_num
-            self.var_name_to_num[var_str] = var_num
-            self.var_num_to_name[var_num] = var_str
-            self.next_var_num += 1
-            return var_num
-
-
-def parse_literal(lit_str, var_name_num_map):
-    if lit_str[0] == "~":
-        return ~var_name_num_map.get_num(lit_str[1:])
-    else:
-        return var_name_num_map.get_num(lit_str)
-
-def make_opb_constraint(line, var_name_num_map, equality_constraint_permitted=False):
-    if line[-1] == ";":
-        del line[-1]
-    if line[-2] not in [">=", "="]:
-        raise VerifierException("Can't find >=")
-    is_equality_constraint = line[-2] == "="
-    if is_equality_constraint and not equality_constraint_permitted:
-        raise VerifierException("Equality constraint not permitted here!")
-    lhs = []
-    if line[-1][-1] == ";":
-        line[-1] = line[-1][:-1]
-    rhs = int(line[-1])
-    for i in range(0, len(line)-2, 2):
-        coef = int(line[i])
-        literal = parse_literal(line[i+1], var_name_num_map)
-        lhs.append((coef, literal))
-    return is_equality_constraint, Constraint(lhs, rhs, var_name_num_map.var_num_to_name)
-
-def solve_p_line(line, constraints, var_name_num_map):
+def solve_p_line(line, constraints):
     stack = []
     pos = 0
     while pos < len(line):
@@ -164,8 +122,8 @@ def solve_p_line(line, constraints, var_name_num_map):
             stack[-2].add_constraint(stack[-1])
             del stack[-1]
         elif line[pos][0] not in "0123456789":
-            literal = parse_literal(line[pos], var_name_num_map)
-            stack.append(Constraint([(1, literal)], 0, var_name_num_map.var_num_to_name))
+            literal = line[pos]
+            stack.append(Constraint([(1, literal)], 0))
         else:
             constraint_num = int(line[pos])
             if constraint_num == 0:
@@ -189,7 +147,7 @@ def unit_propagate(constraints):
             for literal, coef in constraint.lhs.items():
                 if literal in known_literals:
                     rhs -= coef
-                elif ~literal not in known_literals:
+                elif negated(literal) not in known_literals:
                     unassigned_terms.append((coef, literal))
                     coef_sum += coef
             slack = coef_sum - rhs
@@ -202,21 +160,18 @@ def unit_propagate(constraints):
             return known_literals
 
 
-class Proof(object):
-    def __init__(self, opb):
-        self.opb = opb
-        self.var_name_num_map = VarNameNumMap()
+class Verifier(object):
+    def __init__(self):
         self.levels = {}
         self.level = -1
-        self.constraint_num = 1
+        self.next_constraint_num = 1
         self.constraints = {}
         self.objective = None
-        self.numvars = int(opb[0][2])
-        self.numcons = int(opb[0][4])
-        print(self.numvars, self.numcons)
+        self.vars_in_model = None
+        self.contradiction_found = False
 
     def __repr__(self):
-        return "Proof" + str(self.constraints)
+        return "Verifier" + str(self.constraints)
 
     def delete_constraint(self, num):
         del self.constraints[num]
@@ -225,17 +180,16 @@ class Proof(object):
         terms = constraint.lhs.items()
         slack = sum(coef for (literal, coef) in terms) - constraint.rhs
         if self.level != -1:
-            self.levels[self.level].append(self.constraint_num)
-        self.constraints[self.constraint_num] = constraint
+            self.levels[self.level].append(self.next_constraint_num)
+        self.constraints[self.next_constraint_num] = constraint
         if verbose:
-            print("  {}: {}".format(self.constraint_num, constraint))
-        self.constraint_num += 1
+            print("  {}: {}".format(self.next_constraint_num, constraint))
+        self.next_constraint_num += 1
 
-    def process_p_line(self, line):
-        self.add_constraint_to_sequence(solve_p_line(line, self.constraints, self.var_name_num_map))
+    def process_p_rule(self, line):
+        self.add_constraint_to_sequence(solve_p_line(line, self.constraints))
 
-    def process_u_line(self, line):
-        _, constraint = make_opb_constraint(line, self.var_name_num_map)
+    def process_u_rule(self, constraint):
         if unit_propagate(list(self.constraints.values()) + [constraint.opposite()]) is not None:
             raise VerifierException("Failed to do proof for u constraint")
         self.add_constraint_to_sequence(constraint)
@@ -244,76 +198,50 @@ class Proof(object):
         known_literals = unit_propagate(list(self.constraints.values()) + [constraint])
         if known_literals is None:
             raise VerifierException("{} rule leads to contradiction".format(line_type))
-        known_vars = set(~lit if lit < 0 else lit for lit in known_literals)
-        if not known_vars.issuperset(set(self.var_name_num_map.var_num_to_name.keys())):
+        known_vars = set(lit2var(lit) for lit in known_literals)
+        if not known_vars.issuperset(self.vars_in_model):
             raise VerifierException("{} rule does not lead to full assignment".format(line_type))
 
-    def process_o_line(self, line):
-        vars_in_objective = set(~lit if lit<0 else lit for coef, lit in self.objective)
-        literals_in_line = set(parse_literal(token, self.var_name_num_map) for token in line)
+    def process_o_rule(self, line):
+        vars_in_objective = set(lit2var(lit) for coef, lit in self.objective)
+        literals_in_line = set(line)
         rhs = len(line)
-        vars_in_line = set(literal if literal >= 0 else ~literal for literal in literals_in_line)
+        vars_in_line = set(lit2var(literal) for literal in literals_in_line)
         if not vars_in_line.issuperset(vars_in_objective):
-            raise VerifierException("A variable appears in an o line but not in the objective")
-        constraint = Constraint([(1, lit) for lit in literals_in_line], rhs, self.var_name_num_map.var_num_to_name)
+            raise VerifierException("A variable appears in an the objective but not in an o line")
+        constraint = Constraint([(1, lit) for lit in literals_in_line], rhs)
         self.unit_propagate_solution(constraint, "o")
         f_of_line = 0
         for coef, lit in self.objective:
             if lit in literals_in_line:
                 f_of_line += coef
         lhs = [(-coef, lit) for coef, lit in self.objective]
-        self.add_constraint_to_sequence(Constraint(lhs, 1 - f_of_line, self.var_name_num_map.var_num_to_name))
+        self.add_constraint_to_sequence(Constraint(lhs, 1 - f_of_line))
 
-    def process_v_line(self, line):
-        terms = [(1, parse_literal(token, self.var_name_num_map)) for token in line]
+    def process_v_rule(self, line):
+        terms = [(1, token) for token in line]
         rhs = len(line)
-        constraint = Constraint(terms, rhs, self.var_name_num_map.var_num_to_name)
+        constraint = Constraint(terms, rhs)
         self.unit_propagate_solution(constraint, "v")
         self.add_constraint_to_sequence(constraint.opposite())
 
-    def process_a_line(self, line):
-        _, constraint = make_opb_constraint(line, self.var_name_num_map)
+    def process_a_rule(self, constraint):
         self.add_constraint_to_sequence(constraint)
 
-    def process_e_line(self, line):
-        C = self.constraints[int(line[0])]
-        _, D = make_opb_constraint(line[1:], self.var_name_num_map)
-        if not C.equals(D):
+    def process_e_rule(self, C_num, D):
+        if not self.constraints[C_num].equals(D):
             raise VerifierException("Constraints not equal.")
 
-    def process_i_line(self, line):
-        C = self.constraints[int(line[0])]
-        _, D = make_opb_constraint(line[1:], self.var_name_num_map)
-        if not C.syntactically_implies(D):
+    def process_i_rule(self, C_num, D):
+        if not self.constraints[C_num].syntactically_implies(D):
             raise VerifierException("Syntactic implication was not proven.")
-        return D
 
-    def process_j_line(self, line):
-        self.add_constraint_to_sequence(self.process_i_line(line))
+    def process_set_level_rule(self, level):
+        self.level = level
+        if level not in self.levels:
+            self.levels[level] = []
 
-    def process_f_line(self, line):
-        for line in self.opb[1:]:
-            if not line:
-                continue
-            if line[0] == "min:":
-                self.objective = []
-                for i in range(1, len(line) - 1, 2):
-                    coef = int(line[i])
-                    literal = parse_literal(line[i+1], self.var_name_num_map)
-                    self.objective.append((coef, literal))
-            elif line[0][0] != "*":
-                is_equality_constraint, constraint = make_opb_constraint(line, self.var_name_num_map, True)
-                self.add_constraint_to_sequence(constraint)
-                if is_equality_constraint:
-                    self.add_constraint_to_sequence(constraint.other_half_of_equality_constraint())
-
-    def process_set_level_line(self, line):
-        self.level = int(line[0])
-        if self.level not in self.levels:
-            self.levels[self.level] = []
-
-    def process_wipe_level_line(self, line):
-        level = int(line[0])
+    def process_wipe_level_rule(self, level):
         for key in self.levels:
             if key >= level:
                 for constraint_num in self.levels[key]:
@@ -321,20 +249,121 @@ class Proof(object):
                         self.delete_constraint(constraint_num)
                 self.levels[key].clear()
 
+    def process_c_rule(self, c_constraint_num):
+        constraint = self.constraints[c_constraint_num]
+        if not constraint.lhs and constraint.rhs > 0:
+            self.contradiction_found = True
+        else:
+            raise VerifierException()
+
+    def set_objective(self, objective):
+        self.objective = objective
+
+    def make_set_of_vars_in_model(self):
+        self.vars_in_model = set(lit2var(lit) for c in self.constraints.values() for lit in c.lhs)
+        if self.objective is not None:
+            self.vars_in_model |= set(lit2var(literal) for coef, literal in self.objective)
+
+    def check_var_count(self, expected_var_count):
+        if expected_var_count != len(self.vars_in_model):
+            sys.stderr.write("Warning: Number of vars disagrees with first line of OPB file.\n")
+
+
+class OpbVerifier(object):
+    def __init__(self, opb):
+        self.opb = opb
+        self.verifier = Verifier()
+
+    def make_opb_constraint(self, line, equality_constraint_permitted=False):
+        if line[-1] == ";":
+            del line[-1]
+        if line[-2] not in [">=", "="]:
+            raise VerifierException("Can't find >=")
+        is_equality_constraint = line[-2] == "="
+        if is_equality_constraint and not equality_constraint_permitted:
+            raise VerifierException("Equality constraint not permitted here!")
+        lhs = []
+        if line[-1][-1] == ";":
+            line[-1] = line[-1][:-1]
+        rhs = int(line[-1])
+        for i in range(0, len(line)-2, 2):
+            coef = int(line[i])
+            literal = line[i+1]
+            lhs.append((coef, literal))
+        return is_equality_constraint, Constraint(lhs, rhs)
+
+    def process_p_line(self, line):
+        self.verifier.process_p_rule(line)
+
+    def process_u_line(self, line):
+        _, constraint = self.make_opb_constraint(line)
+        self.verifier.process_u_rule(constraint)
+
+    def process_o_line(self, line):
+        self.verifier.process_o_rule(line)
+
+    def process_v_line(self, line):
+        self.verifier.process_v_rule(line)
+
+    def process_a_line(self, line):
+        _, constraint = self.make_opb_constraint(line)
+        self.verifier.process_a_rule(constraint)
+
+    def process_e_line(self, line):
+        C_num = int(line[0])
+        _, D = self.make_opb_constraint(line[1:])
+        self.verifier.process_e_rule(C_num, D)
+
+    def process_i_line(self, line):
+        C_num = int(line[0])
+        _, D = self.make_opb_constraint(line[1:])
+        self.verifier.process_i_rule(C_num, D)
+
+    def process_j_line(self, line):
+        C_num = int(line[0])
+        _, D = self.make_opb_constraint(line[1:])
+        self.verifier.process_i_rule(C_num, D)
+        self.verifier.process_a_rule(D)
+
+    def process_f_line(self, line):
+        num_constraints_before_reading_opb = len(self.verifier.constraints)
+        for line in self.opb[1:]:
+            if not line:
+                continue
+            if line[0] == "min:":
+                objective = []
+                for i in range(1, len(line) - 1, 2):
+                    coef = int(line[i])
+                    literal = line[i+1]
+                    objective.append((coef, literal))
+                self.verifier.set_objective(objective)
+            elif line[0][0] != "*":
+                is_equality_constraint, constraint = self.make_opb_constraint(line, True)
+                self.verifier.process_a_rule(constraint)
+                if is_equality_constraint:
+                    self.verifier.process_a_rule(constraint.other_half_of_equality_constraint())
+        self.verifier.make_set_of_vars_in_model()
+        if self.opb[0][1] == "#variable=":
+            self.verifier.check_var_count(int(self.opb[0][2]))
+            expected_constraint_count = int(self.opb[0][4]) + num_constraints_before_reading_opb
+            if expected_constraint_count != len(self.verifier.constraints):
+                sys.stderr.write("Warning: Number of constraints disagrees with first line of OPB file.\n")
+
+    def process_set_level_line(self, line):
+        self.verifier.process_set_level_rule(int(line[0]))
+
+    def process_wipe_level_line(self, line):
+        self.verifier.process_wipe_level_rule(int(line[0]))
+
     def process_d_line(self, line):
         if line[-1] != "0":
             raise VerifierException("expected 0")
         for token in line[:-1]:
             constraint_num = int(token)
-            self.delete_constraint(constraint_num)
+            self.verifier.delete_constraint(constraint_num)
 
     def process_c_line(self, line):
-        c_constraint_num = int(line[0])
-        constraint = self.constraints[c_constraint_num]
-        if not constraint.lhs and constraint.rhs > 0:
-            print("Proof checked.")
-        else:
-            raise VerifierException()
+        self.verifier.process_c_rule(int(line[0]))
 
     def process_line(self, line):
         processing_functions = {"p": self.process_p_line,
@@ -366,7 +395,7 @@ if __name__=="__main__":
             verbose = True
     with open(sys.argv[1], "r") as f:
         opb_lines = [line.strip().split() for line in f.readlines()]
-    proof = Proof(opb_lines)
+    opb_verifier = OpbVerifier(opb_lines)
     line_count = 0
     with open(sys.argv[2], "r") as f:
         for line in f.readlines():
@@ -377,7 +406,9 @@ if __name__=="__main__":
             if not verbose:
                 sys.stdout.write("\rprogress: {}%".format(int(line_num / line_count * 100)))
             line = line.strip().split()
-            proof.process_line(line)
+            opb_verifier.process_line(line)
             line_num += 1
     if not verbose:
         print("\rprogress: 100%")
+    if opb_verifier.verifier.contradiction_found:
+        print("Contradiction found.")
