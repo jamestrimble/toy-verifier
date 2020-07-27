@@ -136,14 +136,12 @@ def unit_propagate(constraints):
         for constraint in constraints:
             rhs = constraint.rhs
             unassigned_terms = []
-            coef_sum = 0
             for literal, coef in constraint.lhs.items():
                 if literal in known_literals:
                     rhs -= coef
                 elif negated(literal) not in known_literals:
                     unassigned_terms.append((coef, literal))
-                    coef_sum += coef
-            slack = coef_sum - rhs
+            slack = sum(coef for coef, literal in unassigned_terms) - rhs
             if slack < 0:
                 return None
             for coef, literal in unassigned_terms:
