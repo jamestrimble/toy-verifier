@@ -1,7 +1,5 @@
 import sys
 
-from collections import deque
-
 class VerifierException(Exception):
     pass
 
@@ -292,39 +290,6 @@ class OpbVerifier(object):
             lhs.append((coef, literal))
         return is_equality_constraint, Constraint(lhs, rhs)
 
-    def process_p_line(self, line):
-        self.verifier.process_p_rule(line)
-
-    def process_u_line(self, line):
-        _, constraint = self.make_opb_constraint(line)
-        self.verifier.process_u_rule(constraint)
-
-    def process_o_line(self, line):
-        self.verifier.process_o_rule(line)
-
-    def process_v_line(self, line):
-        self.verifier.process_v_rule(line)
-
-    def process_a_line(self, line):
-        _, constraint = self.make_opb_constraint(line)
-        self.verifier.process_a_rule(constraint)
-
-    def process_e_line(self, line):
-        C_num = int(line[0])
-        _, D = self.make_opb_constraint(line[1:])
-        self.verifier.process_e_rule(C_num, D)
-
-    def process_i_line(self, line):
-        C_num = int(line[0])
-        _, D = self.make_opb_constraint(line[1:])
-        self.verifier.process_i_rule(C_num, D)
-
-    def process_j_line(self, line):
-        C_num = int(line[0])
-        _, D = self.make_opb_constraint(line[1:])
-        self.verifier.process_i_rule(C_num, D)
-        self.verifier.process_a_rule(D)
-
     def process_f_line(self, line):
         num_constraints_before_reading_opb = len(self.verifier.constraints)
         for line in self.opb[1:]:
@@ -349,43 +314,51 @@ class OpbVerifier(object):
             if expected_constraint_count != len(self.verifier.constraints):
                 sys.stderr.write("Warning: Number of constraints disagrees with first line of OPB file.\n")
 
-    def process_set_level_line(self, line):
-        self.verifier.process_set_level_rule(int(line[0]))
-
-    def process_wipe_level_line(self, line):
-        self.verifier.process_wipe_level_rule(int(line[0]))
-
-    def process_d_line(self, line):
-        if line[-1] != "0":
-            raise VerifierException("expected 0")
-        for token in line[:-1]:
-            constraint_num = int(token)
-            self.verifier.delete_constraint(constraint_num)
-
-    def process_c_line(self, line):
-        self.verifier.process_c_rule(int(line[0]))
-
     def process_line(self, line):
-        processing_functions = {"p": self.process_p_line,
-                                "a": self.process_a_line,
-                                "f": self.process_f_line,
-                                "i": self.process_i_line,
-                                "j": self.process_j_line,
-                                "e": self.process_e_line,
-                                "u": self.process_u_line,
-                                "c": self.process_c_line,
-                                "v": self.process_v_line,
-                                "o": self.process_o_line,
-                                "#": self.process_set_level_line,
-                                "w": self.process_wipe_level_line,
-                                "d": self.process_d_line}
-        if line:
-            if verbose:
-                print(" ".join(line))
-            if line[0] in processing_functions:
-                processing_functions[line[0]](line[1:])
-            elif line[0][0] != "*" and line[0] != "pseudo-Boolean":
-                raise VerifierException("{} rule not implemented".format(line[0]))
+        if verbose:
+            print(" ".join(line))
+
+        if line[0] == "p":
+            self.verifier.process_p_rule(line[1:])
+        elif line[0] == "u":
+            _, constraint = self.make_opb_constraint(line[1:])
+            self.verifier.process_u_rule(constraint)
+        elif line[0] == "o":
+            self.verifier.process_o_rule(line[1:])
+        elif line[0] == "v":
+            self.verifier.process_v_rule(line[1:])
+        elif line[0] == "a":
+            _, constraint = self.make_opb_constraint(line[1:])
+            self.verifier.process_a_rule(constraint)
+        elif line[0] == "e":
+            C_num = int(line[1])
+            _, D = self.make_opb_constraint(line[2:])
+            self.verifier.process_e_rule(C_num, D)
+        elif line[0] == "i":
+            C_num = int(line[1])
+            _, D = self.make_opb_constraint(line[2:])
+            self.verifier.process_i_rule(C_num, D)
+        elif line[0] == "j":
+            C_num = int(line[1])
+            _, D = self.make_opb_constraint(line[2:])
+            self.verifier.process_i_rule(C_num, D)
+            self.verifier.process_a_rule(D)
+        elif line[0] == "#":
+            self.verifier.process_set_level_rule(int(line[1]))
+        elif line[0] == "w":
+            self.verifier.process_wipe_level_rule(int(line[1]))
+        elif line[0] == "d":
+            if line[-1] != "0":
+                raise VerifierException("expected 0")
+            for token in line[1:-1]:
+                constraint_num = int(token)
+                self.verifier.delete_constraint(constraint_num)
+        elif line[0] == "c":
+            self.verifier.process_c_rule(int(line[1]))
+        elif line[0] == "f":
+            self.process_f_line(int(line[1]))
+        elif line[0][0] != "*" and line[0] != "pseudo-Boolean":
+            raise VerifierException("{} rule not implemented".format(line[0]))
 
 
 if __name__=="__main__":
@@ -406,6 +379,8 @@ if __name__=="__main__":
             if not verbose:
                 sys.stdout.write("\rprogress: {}%".format(int(line_num / line_count * 100)))
             line = line.strip().split()
+            if not line:
+                continue
             opb_verifier.process_line(line)
             line_num += 1
     if not verbose:
