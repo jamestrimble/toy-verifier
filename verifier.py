@@ -27,7 +27,7 @@ class Constraint(object):
     def copy(self):
         return Constraint([(coef, lit) for lit, coef in self.lhs.items()], self.rhs)
 
-    def opposite(self):
+    def negated(self):
         new_lhs = [(-coef, literal) for literal, coef in self.lhs.items()]
         new_rhs = -(self.rhs - 1)
         return Constraint(new_lhs, new_rhs)
@@ -56,9 +56,6 @@ class Constraint(object):
                 self.lhs[literal] = coef
         self.rhs += c.rhs
 
-    def div_and_round_up(self, x, d):
-        return (x + d - 1) // d
-
     def saturate(self):
         for literal in self.lhs:
             if self.lhs[literal] > self.rhs:
@@ -67,9 +64,10 @@ class Constraint(object):
     def divide(self, d):
         if d <= 0:
             raise VerifierException("Trying to divide by {}".format(d))
+        # Divide and round up
         for literal in self.lhs:
-            self.lhs[literal] = self.div_and_round_up(self.lhs[literal], d)
-        self.rhs = self.div_and_round_up(self.rhs, d)
+            self.lhs[literal] = (self.lhs[literal] + d - 1) // d
+        self.rhs = (self.rhs + d - 1) // d
 
     def multiply(self, m):
         if m <= 0:
@@ -78,12 +76,8 @@ class Constraint(object):
             self.lhs[literal] *= m
         self.rhs *= m
 
-    def equals(self, other):
-        for lhs1, lhs2 in [(self.lhs, other.lhs), (other.lhs, self.lhs)]:
-            for literal, coef in lhs1.items():
-                if literal not in lhs2 or coef != lhs2[literal]:
-                    return False
-        return other.rhs == self.rhs
+    def __eq__(self, other):
+        return self.lhs == other.lhs and self.rhs == other.rhs
 
     def syntactically_implies(self, other):
         change = 0
@@ -154,7 +148,7 @@ def unit_propagate(constraints):
 class Verifier(object):
     def __init__(self):
         self.levels = {}
-        self.level = -1
+        self.level = None
         self.next_constraint_num = 1
         self.constraints = {}
         self.objective = None
@@ -168,7 +162,7 @@ class Verifier(object):
         del self.constraints[num]
 
     def add_constraint_to_sequence(self, constraint):
-        if self.level != -1:
+        if self.level is not None:
             self.levels[self.level].append(self.next_constraint_num)
         self.constraints[self.next_constraint_num] = constraint
         if verbose:
@@ -179,7 +173,7 @@ class Verifier(object):
         self.add_constraint_to_sequence(solve_p_line(line, self.constraints))
 
     def process_u_rule(self, constraint):
-        if unit_propagate(list(self.constraints.values()) + [constraint.opposite()]) is not None:
+        if unit_propagate(list(self.constraints.values()) + [constraint.negated()]) is not None:
             raise VerifierException("Failed to do proof for u constraint")
         self.add_constraint_to_sequence(constraint)
 
@@ -207,13 +201,13 @@ class Verifier(object):
         terms = [(1, token) for token in line]
         constraint = Constraint(terms, len(line))
         self.unit_propagate_solution(constraint, "v")
-        self.add_constraint_to_sequence(constraint.opposite())
+        self.add_constraint_to_sequence(constraint.negated())
 
     def process_a_rule(self, constraint):
         self.add_constraint_to_sequence(constraint)
 
     def process_e_rule(self, C_num, D):
-        if not self.constraints[C_num].equals(D):
+        if self.constraints[C_num] != D:
             raise VerifierException("Constraints not equal.")
 
     def process_i_rule(self, C_num, D):
@@ -348,10 +342,7 @@ class OpbVerifier(object):
 
 
 if __name__=="__main__":
-    verbose = False
-    if len(sys.argv) > 3:
-        if sys.argv[3] == "--verbose":
-            verbose = True
+    verbose = len(sys.argv) > 3 and sys.argv[3] == "--verbose"
     with open(sys.argv[1], "r") as f:
         opb_lines = [line.strip().split() for line in f.readlines()]
     opb_verifier = OpbVerifier(opb_lines)
@@ -365,9 +356,8 @@ if __name__=="__main__":
             if not verbose:
                 sys.stdout.write("\rprogress: {}%".format(int(line_num / line_count * 100)))
             line = line.strip().split()
-            if not line:
-                continue
-            opb_verifier.process_line(line)
+            if line:
+                opb_verifier.process_line(line)
             line_num += 1
     if not verbose:
         print("\rprogress: 100%")
