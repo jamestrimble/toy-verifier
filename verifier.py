@@ -45,7 +45,7 @@ class Constraint(object):
                 if self.lhs[negated(literal)] > coef:
                     self.rhs -= coef
                     self.lhs[negated(literal)] -= coef
-                if self.lhs[negated(literal)] == coef:
+                elif self.lhs[negated(literal)] == coef:
                     self.rhs -= coef
                     del self.lhs[negated(literal)]
                 else:
