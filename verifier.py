@@ -3,6 +3,9 @@ import sys
 class VerifierException(Exception):
     pass
 
+class ParserException(Exception):
+    pass
+
 def negated(literal):
     return literal[1:] if literal[0] == "~" else "~" + literal
 
@@ -15,7 +18,7 @@ class Constraint(object):
         self.rhs = rhs
         for coef, literal in lhs:
             if literal in self.lhs or negated(literal) in self.lhs:
-                raise VerifierException("Duplicate variable.")
+                raise VerifierException("Duplicate variable {}".format(lit2var(literal)))
             if coef < 0:
                 literal = negated(literal)
                 self.rhs -= coef
@@ -95,32 +98,35 @@ class Constraint(object):
 
 
 def solve_p_line(line, constraints):
-    stack = []
-    pos = 0
-    while pos < len(line):
-        if pos < len(line)-1 and line[pos+1] == "*":
-            stack[-1].multiply(int(line[pos]))
+    try:
+        stack = []
+        pos = 0
+        while pos < len(line):
+            if pos < len(line)-1 and line[pos+1] == "*":
+                stack[-1].multiply(int(line[pos]))
+                pos += 1
+            elif pos < len(line)-1 and line[pos+1] == "d":
+                stack[-1].divide(int(line[pos]))
+                pos += 1
+            elif line[pos] == "s":
+                stack[-1].saturate()
+            elif line[pos] == "+":
+                stack[-2].add_constraint(stack[-1])
+                del stack[-1]
+            elif line[pos][0] not in "0123456789":
+                literal = line[pos]
+                stack.append(Constraint([(1, literal)], 0))
+            else:
+                constraint_num = int(line[pos])
+                if constraint_num == 0:
+                    break
+                stack.append(constraints[constraint_num].copy())
             pos += 1
-        elif pos < len(line)-1 and line[pos+1] == "d":
-            stack[-1].divide(int(line[pos]))
-            pos += 1
-        elif line[pos] == "s":
-            stack[-1].saturate()
-        elif line[pos] == "+":
-            stack[-2].add_constraint(stack[-1])
-            del stack[-1]
-        elif line[pos][0] not in "0123456789":
-            literal = line[pos]
-            stack.append(Constraint([(1, literal)], 0))
-        else:
-            constraint_num = int(line[pos])
-            if constraint_num == 0:
-                break
-            stack.append(constraints[constraint_num].copy())
-        pos += 1
-    if len(stack) != 1:
-        raise VerifierException("Stack length is {}!".format(len(stack)))
-    return stack[0]
+        if len(stack) != 1:
+            raise VerifierException("Stack length is {}!".format(len(stack)))
+        return stack[0]
+    except ValueError as err:
+        raise ParserException(repr(err))
 
 def unit_propagate(constraints):
     """Return None iff unit propagation wipes out a constraint"""
@@ -174,7 +180,7 @@ class Verifier(object):
 
     def process_u_rule(self, constraint):
         if unit_propagate(list(self.constraints.values()) + [constraint.negated()]) is not None:
-            raise VerifierException("Failed to do proof for u constraint")
+            raise VerifierException("Failed to do proof for u rule")
         self.add_constraint_to_sequence(constraint)
 
     def unit_propagate_solution(self, constraint, line_type):
@@ -190,7 +196,8 @@ class Verifier(object):
         literals_in_line = set(line)
         vars_in_line = set(lit2var(literal) for literal in literals_in_line)
         if not vars_in_line.issuperset(vars_in_objective):
-            raise VerifierException("A variable appears in an the objective but not in an o line")
+            unset_vars = ", ".join(vars_in_objective - vars_in_line)
+            raise VerifierException("Variables [{}] appear in the objective but not in an o line".format(unset_vars))
         constraint = Constraint([(1, lit) for lit in literals_in_line], len(line))
         self.unit_propagate_solution(constraint, "o")
         f_of_line = sum(coef for coef, lit in self.objective if lit in literals_in_line)
@@ -208,11 +215,11 @@ class Verifier(object):
 
     def process_e_rule(self, C_num, D):
         if self.constraints[C_num] != D:
-            raise VerifierException("Constraints not equal.")
+            raise VerifierException("Constraints {} and {} are not equal.".format(self.constraints[C_num], D))
 
     def process_i_rule(self, C_num, D):
         if not self.constraints[C_num].syntactically_implies(D):
-            raise VerifierException("Syntactic implication was not proven.")
+            raise VerifierException("Syntactic implication was not proven ({} and {}).".format(self.constraints[C_num], D))
 
     def process_set_level_rule(self, level):
         self.level = level
@@ -232,7 +239,7 @@ class Verifier(object):
         if not constraint.lhs and constraint.rhs > 0:
             self.contradiction_found = True
         else:
-            raise VerifierException()
+            raise VerifierException("Contradiction not confirmed for c rule.")
 
     def set_objective(self, objective):
         self.objective = objective
@@ -256,10 +263,10 @@ class OpbVerifier(object):
         if line[-1] == ";":
             del line[-1]
         if line[-2] not in [">=", "="]:
-            raise VerifierException("Can't find >=")
+            raise ParserException("Can't find >=")
         is_equality_constraint = line[-2] == "="
         if is_equality_constraint and not equality_constraint_permitted:
-            raise VerifierException("Equality constraint not permitted here!")
+            raise ParserException("Equality constraint not permitted here!")
         lhs = []
         if line[-1][-1] == ";":
             line[-1] = line[-1][:-1]
@@ -272,73 +279,86 @@ class OpbVerifier(object):
 
     def process_f_line(self, line):
         num_constraints_before_reading_opb = len(self.verifier.constraints)
-        for line in self.opb[1:]:
+        for line_num, line in enumerate(self.opb[1:]):
             if not line:
                 continue
-            if line[0] == "min:":
-                objective = []
-                for i in range(1, len(line) - 1, 2):
-                    coef = int(line[i])
-                    literal = line[i+1]
-                    objective.append((coef, literal))
-                self.verifier.set_objective(objective)
-            elif line[0][0] != "*":
-                is_equality_constraint, constraint = self.make_opb_constraint(line, True)
-                self.verifier.process_a_rule(constraint)
-                if is_equality_constraint:
-                    self.verifier.process_a_rule(constraint.other_half_of_equality_constraint())
+            try:
+                if line[0] == "min:":
+                    objective = []
+                    for i in range(1, len(line) - 1, 2):
+                        coef = int(line[i])
+                        literal = line[i+1]
+                        objective.append((coef, literal))
+                    self.verifier.set_objective(objective)
+                elif line[0][0] != "*":
+                    is_equality_constraint, constraint = self.make_opb_constraint(line, True)
+                    self.verifier.process_a_rule(constraint)
+                    if is_equality_constraint:
+                        self.verifier.process_a_rule(constraint.other_half_of_equality_constraint())
+            except ValueError as err:
+                raise ParserException(repr(err) + " at line {} of OPB file".format(line_num + 2))
+            except VerifierException as err:
+                raise ParserException(repr(err) + " at line {} of OPB file".format(line_num + 2))
         self.verifier.make_set_of_vars_in_model()
-        if self.opb[0][1] == "#variable=":
-            self.verifier.check_var_count(int(self.opb[0][2]))
-            expected_constraint_count = int(self.opb[0][4]) + num_constraints_before_reading_opb
-            if expected_constraint_count != len(self.verifier.constraints):
-                sys.stderr.write("Warning: Number of constraints disagrees with first line of OPB file.\n")
+        try:
+            if self.opb[0][1] == "#variable=":
+                self.verifier.check_var_count(int(self.opb[0][2]))
+                expected_constraint_count = int(self.opb[0][4]) + num_constraints_before_reading_opb
+                if expected_constraint_count != len(self.verifier.constraints):
+                    sys.stderr.write("Warning: Number of constraints disagrees with first line of OPB file.\n")
+        except ValueError as err:
+            raise ParserException(repr(err) + " at line 1 of OPB file")
 
     def process_line(self, line):
         if verbose:
             print(" ".join(line))
 
-        if line[0] == "p":
-            self.verifier.process_p_rule(line[1:])
-        elif line[0] == "u":
-            _, constraint = self.make_opb_constraint(line[1:])
-            self.verifier.process_u_rule(constraint)
-        elif line[0] == "o":
-            self.verifier.process_o_rule(line[1:])
-        elif line[0] == "v":
-            self.verifier.process_v_rule(line[1:])
-        elif line[0] == "a":
-            _, constraint = self.make_opb_constraint(line[1:])
-            self.verifier.process_a_rule(constraint)
-        elif line[0] == "e":
-            C_num = int(line[1])
-            _, D = self.make_opb_constraint(line[2:])
-            self.verifier.process_e_rule(C_num, D)
-        elif line[0] == "i":
-            C_num = int(line[1])
-            _, D = self.make_opb_constraint(line[2:])
-            self.verifier.process_i_rule(C_num, D)
-        elif line[0] == "j":
-            C_num = int(line[1])
-            _, D = self.make_opb_constraint(line[2:])
-            self.verifier.process_i_rule(C_num, D)
-            self.verifier.process_a_rule(D)
-        elif line[0] == "#":
-            self.verifier.process_set_level_rule(int(line[1]))
-        elif line[0] == "w":
-            self.verifier.process_wipe_level_rule(int(line[1]))
-        elif line[0] == "d":
-            if line[-1] != "0":
-                raise VerifierException("expected 0")
-            for token in line[1:-1]:
-                constraint_num = int(token)
-                self.verifier.delete_constraint(constraint_num)
-        elif line[0] == "c":
-            self.verifier.process_c_rule(int(line[1]))
-        elif line[0] == "f":
-            self.process_f_line(int(line[1]))
-        elif line[0][0] != "*" and line[0] != "pseudo-Boolean":
-            raise VerifierException("{} rule not implemented".format(line[0]))
+        try:
+            if line[0] == "p":
+                self.verifier.process_p_rule(line[1:])
+            elif line[0] == "u":
+                _, constraint = self.make_opb_constraint(line[1:])
+                self.verifier.process_u_rule(constraint)
+            elif line[0] == "o":
+                self.verifier.process_o_rule(line[1:])
+            elif line[0] == "v":
+                self.verifier.process_v_rule(line[1:])
+            elif line[0] == "a":
+                _, constraint = self.make_opb_constraint(line[1:])
+                self.verifier.process_a_rule(constraint)
+            elif line[0] == "e":
+                C_num = int(line[1])
+                _, D = self.make_opb_constraint(line[2:])
+                self.verifier.process_e_rule(C_num, D)
+            elif line[0] == "i":
+                C_num = int(line[1])
+                _, D = self.make_opb_constraint(line[2:])
+                self.verifier.process_i_rule(C_num, D)
+            elif line[0] == "j":
+                C_num = int(line[1])
+                _, D = self.make_opb_constraint(line[2:])
+                self.verifier.process_i_rule(C_num, D)
+                self.verifier.process_a_rule(D)
+            elif line[0] == "#":
+                self.verifier.process_set_level_rule(int(line[1]))
+            elif line[0] == "w":
+                self.verifier.process_wipe_level_rule(int(line[1]))
+            elif line[0] == "d":
+                if line[-1] != "0":
+                    raise ParserException("expected 0")
+                for token in line[1:-1]:
+                    constraint_num = int(token)
+                    self.verifier.delete_constraint(constraint_num)
+            elif line[0] == "c":
+                self.verifier.process_c_rule(int(line[1]))
+            elif line[0] == "f":
+                self.process_f_line(int(line[1]))
+            elif line[0][0] != "*" and line[0] != "pseudo-Boolean":
+                raise ParserException("{} rule not implemented".format(line[0]))
+        except ValueError as err:
+            raise ParserException(repr(err))
+        except KeyError as err:
+            raise ParserException(repr(err))
 
 
 if __name__=="__main__":
@@ -347,9 +367,16 @@ if __name__=="__main__":
         opb_lines = [line.strip().split() for line in f.readlines()]
     opb_verifier = OpbVerifier(opb_lines)
     with open(sys.argv[2], "r") as f:
-        for line in f.readlines():
+        for line_num, line in enumerate(f.readlines()):
             line = line.strip().split()
             if line:
-                opb_verifier.process_line(line)
+                try:
+                    opb_verifier.process_line(line)
+                except ParserException as err:
+                    sys.stderr.write(repr(err) + " at line {} of proof\n".format(line_num+1))
+                    exit(1)
+                except VerifierException as err:
+                    sys.stderr.write(repr(err) + " at line {} of proof\n".format(line_num+1))
+                    exit(2)
     if opb_verifier.verifier.contradiction_found:
         print("Contradiction found.")
