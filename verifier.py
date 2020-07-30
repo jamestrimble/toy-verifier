@@ -346,20 +346,10 @@ if __name__=="__main__":
     with open(sys.argv[1], "r") as f:
         opb_lines = [line.strip().split() for line in f.readlines()]
     opb_verifier = OpbVerifier(opb_lines)
-    line_count = 0
     with open(sys.argv[2], "r") as f:
         for line in f.readlines():
-            line_count += 1
-    line_num = 0
-    with open(sys.argv[2], "r") as f:
-        for line in f.readlines():
-            if not verbose:
-                sys.stdout.write("\rprogress: {}%".format(int(line_num / line_count * 100)))
             line = line.strip().split()
             if line:
                 opb_verifier.process_line(line)
-            line_num += 1
-    if not verbose:
-        print("\rprogress: 100%")
     if opb_verifier.verifier.contradiction_found:
         print("Contradiction found.")
